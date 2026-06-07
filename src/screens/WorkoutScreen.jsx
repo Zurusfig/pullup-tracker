@@ -5,14 +5,32 @@ import RepCounter from '../components/workout/RepCounter';
 import SetPanel from '../components/workout/SetPanel';
 import StreakBadge from '../components/gamification/StreakBadge';
 import Button from '../components/ui/Button';
+import DebugLog from '../components/ui/DebugLog';
 import { useRepCounter } from '../hooks/useRepCounter';
+
+function workoutDebugLines(debug) {
+  if (!debug) return ['waiting for camera…'];
+  if (!debug.tracking) {
+    return [
+      `tracking: NO PERSON DETECTED`,
+      `state: ${debug.state}`,
+      `baseline_y: ${debug.baselineY?.toFixed(3)}  range: ${debug.range?.toFixed(3)}`,
+    ];
+  }
+  return [
+    `tracking: yes   state: ${debug.state}`,
+    `shoulder_y  raw: ${debug.rawY.toFixed(3)}  smoothed: ${debug.smoothedY.toFixed(3)}`,
+    `baseline_y: ${debug.baselineY.toFixed(3)}  up_thresh: ${debug.upThreshold.toFixed(3)}  range: ${debug.range.toFixed(3)}`,
+    `nose visibility: ${debug.visibility.toFixed(2)}`,
+  ];
+}
 
 export default function WorkoutScreen({ calibration, setNumber, streak, onSetComplete }) {
   const [cameraStatus, setCameraStatus] = useState('loading');
   const startedAtRef = useRef(Date.now());
   const [startedAt] = useState(() => Date.now());
 
-  const { repCount, lostTracking, repTimestamps, processLandmarks, reset } = useRepCounter({
+  const { repCount, lostTracking, debug, repTimestamps, processLandmarks, reset } = useRepCounter({
     calibration,
   });
 
@@ -66,6 +84,8 @@ export default function WorkoutScreen({ calibration, setNumber, streak, onSetCom
           </div>
         )}
       </div>
+
+      <DebugLog lines={workoutDebugLines(debug)} />
 
       <RepCounter count={repCount} />
 

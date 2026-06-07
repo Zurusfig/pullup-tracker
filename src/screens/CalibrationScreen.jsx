@@ -3,7 +3,26 @@ import { motion } from 'framer-motion';
 import { CheckCircle2 } from 'lucide-react';
 import CameraFeed from '../components/camera/CameraFeed';
 import Button from '../components/ui/Button';
+import DebugLog from '../components/ui/DebugLog';
 import { avgShoulderY } from '../lib/repAlgorithm';
+
+function calibrationDebugLines(debug, step) {
+  if (!debug) return ['waiting for camera…'];
+  if (!debug.hasLandmarks) return ['tracking: NO PERSON DETECTED — step into frame'];
+  if (step === 0) {
+    return [
+      `tracking: yes`,
+      `shoulder_y: ${debug.y.toFixed(3)}`,
+      `samples collected: ${debug.samples} / 30`,
+    ];
+  }
+  return [
+    `tracking: yes`,
+    `shoulder_y: ${debug.y.toFixed(3)}   baseline_y: ${debug.baselineY.toFixed(3)}`,
+    `lowest y seen: ${debug.minY === Infinity ? '—' : debug.minY.toFixed(3)}`,
+    `rep phase: ${debug.repPhase}`,
+  ];
+}
 
 const STEPS = [
   {
@@ -25,16 +44,24 @@ export default function CalibrationScreen({ onComplete }) {
   const [phase, setPhase] = useState('intro'); // intro | countdown | sampling | done
   const [countdown, setCountdown] = useState(3);
   const [result, setResult] = useState({ baseline_y: null, up_y: null });
+  const [debug, setDebug] = useState(null);
 
   const samplesRef = useRef([]);
   const minYRef = useRef(Infinity);
   const repPhaseRef = useRef('waiting'); // waiting | descending
+  const frameCountRef = useRef(0);
 
   const handleLandmarksStep1 = useCallback((landmarks) => {
-    if (phase !== 'sampling' || !landmarks) return;
+    frameCountRef.current += 1;
+    const shouldLog = frameCountRef.current % 4 === 0;
+    if (phase !== 'sampling' || !landmarks) {
+      if (shouldLog) setDebug(landmarks ? null : { hasLandmarks: false });
+      return;
+    }
     const y = avgShoulderY(landmarks);
     if (y == null) return;
     samplesRef.current.push(y);
+    if (shouldLog) setDebug({ hasLandmarks: true, y, samples: samplesRef.current.length });
     if (samplesRef.current.length >= 30) {
       const mean = samplesRef.current.reduce((a, b) => a + b, 0) / samplesRef.current.length;
       setResult((r) => ({ ...r, baseline_y: mean }));
@@ -44,10 +71,25 @@ export default function CalibrationScreen({ onComplete }) {
 
   const handleLandmarksStep2 = useCallback(
     (landmarks) => {
-      if (phase !== 'sampling' || !landmarks || result.baseline_y == null) return;
+      frameCountRef.current += 1;
+      const shouldLog = frameCountRef.current % 4 === 0;
+      if (phase !== 'sampling' || !landmarks || result.baseline_y == null) {
+        if (shouldLog) setDebug(landmarks ? null : { hasLandmarks: false });
+        return;
+      }
       const y = avgShoulderY(landmarks);
       if (y == null) return;
       minYRef.current = Math.min(minYRef.current, y);
+
+      if (shouldLog) {
+        setDebug({
+          hasLandmarks: true,
+          y,
+          baselineY: result.baseline_y,
+          minY: minYRef.current,
+          repPhase: repPhaseRef.current,
+        });
+      }
 
       // Detect a full cycle: goes up (y decreases) then returns near baseline
       if (repPhaseRef.current === 'waiting' && y < result.baseline_y - 0.05) {
@@ -70,6 +112,8 @@ export default function CalibrationScreen({ onComplete }) {
           samplesRef.current = [];
           minYRef.current = Infinity;
           repPhaseRef.current = 'waiting';
+          frameCountRef.current = 0;
+          setDebug(null);
           setPhase('sampling');
           return 0;
         }
@@ -128,6 +172,8 @@ export default function CalibrationScreen({ onComplete }) {
           )}
         </div>
       )}
+
+      {showCamera && <DebugLog lines={calibrationDebugLines(debug, step)} />}
 
       {step === 2 && (
         <motion.div

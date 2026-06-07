@@ -17,7 +17,9 @@ export function useRepCounter({ calibration, onRep }) {
   const [repCount, setRepCount] = useState(0);
   const [poseState, setPoseState] = useState(STATES.HANGING);
   const [lostTracking, setLostTracking] = useState(false);
+  const [debug, setDebug] = useState(null);
 
+  const frameCountRef = useRef(0);
   const smoothedRef = useRef(null);
   const stateRef = useRef(STATES.HANGING);
   const candidateStateRef = useRef(null);
@@ -38,7 +40,9 @@ export function useRepCounter({ calibration, onRep }) {
     lastRepTimeRef.current = 0;
     lostSinceRef.current = null;
     repTimestampsRef.current = [];
+    frameCountRef.current = 0;
     setLostTracking(false);
+    setDebug(null);
   }, []);
 
   const transition = useCallback((next) => {
@@ -62,9 +66,20 @@ export function useRepCounter({ calibration, onRep }) {
       const { baseline_y: baselineY, range } = calibration;
       const upThreshold = upThresholdFor(baselineY, range);
 
+      frameCountRef.current += 1;
+      const shouldLog = frameCountRef.current % 6 === 0;
+
       if (!landmarks || landmarks.length === 0) {
         if (lostSinceRef.current == null) lostSinceRef.current = performance.now();
         else if (performance.now() - lostSinceRef.current > 2000) setLostTracking(true);
+        if (shouldLog) {
+          setDebug({
+            tracking: false,
+            state: stateRef.current,
+            baselineY,
+            range,
+          });
+        }
         return;
       }
       lostSinceRef.current = null;
@@ -80,6 +95,19 @@ export function useRepCounter({ calibration, onRep }) {
       const visibility = noseVisibility(landmarks);
       const now = performance.now();
       const current = stateRef.current;
+
+      if (shouldLog) {
+        setDebug({
+          tracking: true,
+          state: current,
+          rawY,
+          smoothedY: smoothed,
+          visibility,
+          baselineY,
+          upThreshold,
+          range,
+        });
+      }
 
       switch (current) {
         case STATES.HANGING:
@@ -116,6 +144,7 @@ export function useRepCounter({ calibration, onRep }) {
     repCount,
     poseState,
     lostTracking,
+    debug,
     repTimestamps: repTimestampsRef,
     processLandmarks,
     reset,
