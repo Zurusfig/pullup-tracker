@@ -1,6 +1,6 @@
 import { useCallback, useRef, useState } from 'react';
-import { motion } from 'framer-motion';
-import { CheckCircle2 } from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
+import { CheckCircle2, AlertTriangle } from 'lucide-react';
 import CameraFeed from '../components/camera/CameraFeed';
 import Button from '../components/ui/Button';
 import DebugLog from '../components/ui/DebugLog';
@@ -10,18 +10,24 @@ function calibrationDebugLines(debug, step) {
   if (!debug) return ['waiting for camera…'];
   if (!debug.hasLandmarks) return ['tracking: NO PERSON DETECTED — step into frame'];
   if (step === 0) {
+    if (debug.sampling) {
+      return [
+        `tracking: yes — sampling`,
+        `shoulder_y: ${debug.y.toFixed(3)}`,
+        `samples collected: ${debug.samples} / 30`,
+      ];
+    }
+    return [`tracking: yes — in position, ready to sample`, `shoulder_y: ${debug.y.toFixed(3)}`];
+  }
+  if (debug.sampling) {
     return [
-      `tracking: yes`,
-      `shoulder_y: ${debug.y.toFixed(3)}`,
-      `samples collected: ${debug.samples} / 30`,
+      `tracking: yes — sampling`,
+      `shoulder_y: ${debug.y.toFixed(3)}   baseline_y: ${debug.baselineY.toFixed(3)}`,
+      `lowest y seen: ${debug.minY === Infinity ? '—' : debug.minY.toFixed(3)}`,
+      `rep phase: ${debug.repPhase}`,
     ];
   }
-  return [
-    `tracking: yes`,
-    `shoulder_y: ${debug.y.toFixed(3)}   baseline_y: ${debug.baselineY.toFixed(3)}`,
-    `lowest y seen: ${debug.minY === Infinity ? '—' : debug.minY.toFixed(3)}`,
-    `rep phase: ${debug.repPhase}`,
-  ];
+  return [`tracking: yes — in position, ready to sample`, `shoulder_y: ${debug.y.toFixed(3)}`];
 }
 
 const STEPS = [
@@ -45,6 +51,7 @@ export default function CalibrationScreen({ onComplete }) {
   const [countdown, setCountdown] = useState(3);
   const [result, setResult] = useState({ baseline_y: null, up_y: null });
   const [debug, setDebug] = useState(null);
+  const [personDetected, setPersonDetected] = useState(false);
 
   const samplesRef = useRef([]);
   const minYRef = useRef(Infinity);
@@ -52,16 +59,26 @@ export default function CalibrationScreen({ onComplete }) {
   const frameCountRef = useRef(0);
 
   const handleLandmarksStep1 = useCallback((landmarks) => {
+    const hasLandmarks = !!landmarks && landmarks.length > 0;
+    setPersonDetected(hasLandmarks);
+
     frameCountRef.current += 1;
     const shouldLog = frameCountRef.current % 4 === 0;
-    if (phase !== 'sampling' || !landmarks) {
-      if (shouldLog) setDebug(landmarks ? null : { hasLandmarks: false });
+
+    if (!hasLandmarks) {
+      if (shouldLog) setDebug({ hasLandmarks: false });
       return;
     }
     const y = avgShoulderY(landmarks);
     if (y == null) return;
+
+    if (phase !== 'sampling') {
+      if (shouldLog) setDebug({ hasLandmarks: true, y, sampling: false });
+      return;
+    }
+
     samplesRef.current.push(y);
-    if (shouldLog) setDebug({ hasLandmarks: true, y, samples: samplesRef.current.length });
+    if (shouldLog) setDebug({ hasLandmarks: true, y, samples: samplesRef.current.length, sampling: true });
     if (samplesRef.current.length >= 30) {
       const mean = samplesRef.current.reduce((a, b) => a + b, 0) / samplesRef.current.length;
       setResult((r) => ({ ...r, baseline_y: mean }));
@@ -71,14 +88,24 @@ export default function CalibrationScreen({ onComplete }) {
 
   const handleLandmarksStep2 = useCallback(
     (landmarks) => {
+      const hasLandmarks = !!landmarks && landmarks.length > 0;
+      setPersonDetected(hasLandmarks);
+
       frameCountRef.current += 1;
       const shouldLog = frameCountRef.current % 4 === 0;
-      if (phase !== 'sampling' || !landmarks || result.baseline_y == null) {
-        if (shouldLog) setDebug(landmarks ? null : { hasLandmarks: false });
+
+      if (!hasLandmarks || result.baseline_y == null) {
+        if (shouldLog) setDebug({ hasLandmarks });
         return;
       }
       const y = avgShoulderY(landmarks);
       if (y == null) return;
+
+      if (phase !== 'sampling') {
+        if (shouldLog) setDebug({ hasLandmarks: true, y, sampling: false });
+        return;
+      }
+
       minYRef.current = Math.min(minYRef.current, y);
 
       if (shouldLog) {
@@ -88,6 +115,7 @@ export default function CalibrationScreen({ onComplete }) {
           baselineY: result.baseline_y,
           minY: minYRef.current,
           repPhase: repPhaseRef.current,
+          sampling: true,
         });
       }
 
@@ -105,6 +133,7 @@ export default function CalibrationScreen({ onComplete }) {
   function startCountdown() {
     setPhase('countdown');
     setCountdown(3);
+    setPersonDetected(false);
     const interval = setInterval(() => {
       setCountdown((c) => {
         if (c <= 1) {
@@ -159,17 +188,65 @@ export default function CalibrationScreen({ onComplete }) {
 
       {showCamera && (
         <div className="relative">
-          <CameraFeed active onLandmarks={onLandmarks} />
+          <motion.div
+            className="rounded-2xl"
+            animate={
+              personDetected
+                ? {
+                    boxShadow: [
+                      '0 0 0px 0px rgba(88,204,2,0.55)',
+                      '0 0 0px 8px rgba(88,204,2,0)',
+                    ],
+                  }
+                : { boxShadow: '0 0 0px 3px rgba(255,75,75,0.45)' }
+            }
+            transition={
+              personDetected
+                ? { duration: 1.4, repeat: Infinity, ease: 'easeOut' }
+                : { duration: 0.3 }
+            }
+          >
+            <CameraFeed active onLandmarks={onLandmarks} />
+          </motion.div>
+
           {phase === 'countdown' && (
             <div className="absolute inset-0 flex items-center justify-center bg-black/40 rounded-2xl">
               <span className="text-white font-extrabold text-7xl">{countdown}</span>
             </div>
           )}
-          {phase === 'sampling' && (
-            <div className="absolute top-3 left-1/2 -translate-x-1/2 bg-brand-blue text-white text-sm font-bold px-3 py-1 rounded-full">
-              Sampling…
-            </div>
-          )}
+
+          <div className="absolute top-3 left-1/2 -translate-x-1/2 flex flex-col items-center gap-2">
+            {phase === 'sampling' && (
+              <div className="bg-brand-blue text-white text-sm font-bold px-3 py-1 rounded-full">
+                Sampling…
+              </div>
+            )}
+            <AnimatePresence mode="wait">
+              {personDetected ? (
+                <motion.div
+                  key="detected"
+                  initial={{ opacity: 0, y: -8, scale: 0.9 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0, y: -8, scale: 0.9 }}
+                  className="flex items-center gap-1.5 bg-brand-green text-white text-xs font-extrabold px-3 py-1.5 rounded-full shadow-md"
+                >
+                  <CheckCircle2 size={14} />
+                  In position
+                </motion.div>
+              ) : (
+                <motion.div
+                  key="not-detected"
+                  initial={{ opacity: 0, y: -8, scale: 0.9 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0, y: -8, scale: 0.9 }}
+                  className="flex items-center gap-1.5 bg-brand-red text-white text-xs font-extrabold px-3 py-1.5 rounded-full shadow-md"
+                >
+                  <AlertTriangle size={14} />
+                  Step into frame
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
         </div>
       )}
 
@@ -189,9 +266,16 @@ export default function CalibrationScreen({ onComplete }) {
 
       <div className="mt-auto flex flex-col gap-3">
         {(step === 0 || step === 1) && phase === 'intro' && (
-          <Button color="purple" onClick={startCountdown}>
-            Start sampling
-          </Button>
+          <>
+            <p className="text-center text-sm font-bold text-gray-400">
+              {personDetected
+                ? "Looking good — you're in frame. Hit start when ready."
+                : 'Step into frame and wait for the green "In position" badge.'}
+            </p>
+            <Button color="purple" onClick={startCountdown}>
+              Start sampling
+            </Button>
+          </>
         )}
         {phase === 'done' && (
           <Button color="green" onClick={handleNext}>
