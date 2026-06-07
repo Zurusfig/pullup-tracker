@@ -64,15 +64,17 @@ export function usePoseDetection({ videoRef, canvasRef, onLandmarks, active }) {
       if (!video || !landmarker) return;
 
       if (video.readyState >= 2) {
-        const result = landmarker.detectForVideo(video, performance.now());
-        const landmarks = result?.landmarks?.[0] || null;
-        onLandmarks?.(landmarks);
-
+        // Resizing a canvas clears it, so size it before drawing — and only
+        // when the dimensions actually change, to avoid wiping every frame.
         const canvas = canvasRef.current;
-        if (canvas) {
+        if (canvas && (canvas.width !== video.videoWidth || canvas.height !== video.videoHeight)) {
           canvas.width = video.videoWidth;
           canvas.height = video.videoHeight;
         }
+
+        const result = landmarker.detectForVideo(video, performance.now());
+        const landmarks = result?.landmarks?.[0] || null;
+        onLandmarks?.(landmarks);
       }
       rafRef.current = requestAnimationFrame(loop);
     }
